@@ -1,0 +1,232 @@
+USE WebshopCase
+GO
+
+-- Base tables
+CREATE TABLE Customers (
+Customer_ID INT IDENTITY(1,1) PRIMARY KEY,
+FullName NVARCHAR(255) NOT NULL,
+PhoneNumber NVARCHAR(20),
+Email NVARCHAR(255) NOT NULL,
+[Address] NVARCHAR(255) NOT NULL
+);
+GO
+
+CREATE TABLE Categories (
+Category_ID INT IDENTITY(1,1) PRIMARY KEY,
+CategoryName NVARCHAR(255) NOT NULL
+);
+GO
+
+CREATE TABLE PaymentMethods (
+PaymentMethod_ID INT IDENTITY(1,1) PRIMARY KEY,
+PaymentMethod NVARCHAR(50) NOT NULL
+);
+GO
+
+CREATE TABLE OrderStatus (
+OrderStatus_ID INT IDENTITY(1,1) PRIMARY KEY,
+[Status] NVARCHAR(50) NOT NULL
+);
+GO
+
+-- 1:1 Customers ↔ Points
+CREATE TABLE Points (
+Point_ID INT IDENTITY(1,1) PRIMARY KEY,
+PointBalance INT NOT NULL DEFAULT 0,
+MaxDiscount DECIMAL(5,2),
+Customer_ID INT NOT NULL UNIQUE,
+CONSTRAINT FK_Points_Customers 
+	FOREIGN KEY (Customer_ID) 
+	REFERENCES Customers(Customer_ID)
+);
+GO
+
+-- 1:1 Customers ↔ ShoppingCart
+CREATE TABLE ShoppingCart (
+ShoppingCart_ID INT IDENTITY(1,1) PRIMARY KEY,
+Customer_ID INT NOT NULL UNIQUE,
+CONSTRAINT FK_ShoppingCart_Customers 
+	FOREIGN KEY (Customer_ID) 
+	REFERENCES Customers(Customer_ID)
+);
+GO
+
+-- Products
+CREATE TABLE Products (
+Product_ID INT IDENTITY(000000000001,1) PRIMARY KEY,
+ProductName NVARCHAR(255) NOT NULL,
+[Description] NVARCHAR(4000),
+Price DECIMAL(10,2) NOT NULL CHECK (Price >= 0),
+StockStatus INT NOT NULL,
+PicturePath NVARCHAR(260),
+Category_ID INT NOT NULL,
+CONSTRAINT FK_Products_Categories 
+	FOREIGN KEY (Category_ID) 
+	REFERENCES Categories(Category_ID)
+);
+GO
+
+-- Payment (one per cart)
+CREATE TABLE Payment (
+Payment_ID INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
+ShoppingCart_ID INT NOT NULL UNIQUE,
+PaymentMethod_ID INT NOT NULL,
+CONSTRAINT FK_Payment_ShoppingCart
+	FOREIGN KEY (ShoppingCart_ID)
+	REFERENCES ShoppingCart(ShoppingCart_ID),
+CONSTRAINT FK_Payment_PaymentMethod
+	FOREIGN KEY (PaymentMethod_ID)
+	REFERENCES PaymentMethods(PaymentMethod_ID),
+-- Ensure we can reference (Payment_ID, ShoppingCart_ID) as a pair:
+    CONSTRAINT UQ_Payment_PaymentID_ShoppingCart UNIQUE (Payment_ID, ShoppingCart_ID)
+);
+GO
+
+-- Order (one per cart, one order per payment; payment must belong to same cart)
+CREATE TABLE [Order] (
+Order_ID INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
+Point_ID INT NOT NULL,
+Customer_ID INT NOT NULL,
+Payment_ID INT NOT NULL UNIQUE,
+ShoppingCart_ID INT NOT NULL,
+OrderStatus_ID INT NOT NULL,
+CONSTRAINT FK_Order_Point
+	FOREIGN KEY (Point_ID)
+	REFERENCES Points(Point_ID),
+CONSTRAINT FK_Order_Customer
+	FOREIGN KEY (Customer_ID)
+	REFERENCES Customers(Customer_ID),
+CONSTRAINT FK_Order_Payment
+	FOREIGN KEY (Payment_ID)
+	REFERENCES Payment(Payment_ID),
+CONSTRAINT FK_Order_ShoppingCart
+	FOREIGN KEY (ShoppingCart_ID)
+	REFERENCES ShoppingCart(ShoppingCart_ID),
+CONSTRAINT FK_Order_OrderStatus
+	FOREIGN KEY (OrderStatus_ID)
+	REFERENCES OrderStatus(OrderStatus_ID),
+
+-- Cart can produce at most one order:
+CONSTRAINT UQ_Order_ShoppingCart UNIQUE (ShoppingCart_ID),
+
+-- Ensure Payment belongs to the same cart as the Order:
+CONSTRAINT FK_Order_Payment_Composite
+	FOREIGN KEY (Payment_ID, ShoppingCart_ID)
+	REFERENCES Payment (Payment_ID, ShoppingCart_ID)
+);
+GO
+
+
+-- Cart items (junction with quantity)
+CREATE TABLE ShoppingCartProduct (
+ShoppingCart_ID INT NOT NULL,
+Product_ID INT NOT NULL,
+Quantity INT NOT NULL CONSTRAINT DF_SCP_Quantity DEFAULT (1),
+Unit NVARCHAR(100) NOT NULL,
+CONSTRAINT PK_ShoppingCartProduct PRIMARY KEY (ShoppingCart_ID, Product_ID),
+CONSTRAINT FK_ShoppingCartProduct_ShoppingCart
+	FOREIGN KEY (ShoppingCart_ID)
+	REFERENCES ShoppingCart(ShoppingCart_ID)
+	ON DELETE CASCADE,
+CONSTRAINT FK_ShoppingCartProduct_Product
+	FOREIGN KEY (Product_ID)
+	REFERENCES Products(Product_ID),
+CONSTRAINT CK_ShoppingCartProduct_Quantity_Positive CHECK (Quantity > 0)
+);
+GO
+
+-- Point history (ledger-style: many rows per Points; Order reference optional)
+CREATE TABLE PointHistory (
+PointHistory_ID INT IDENTITY(1,1) PRIMARY KEY,
+PointsEarned INT NULL,
+PointsUsed INT NULL,
+PointsTime DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+Point_ID INT NOT NULL ,
+Order_ID INT NULL,
+CONSTRAINT FK_PointHistory_Points 
+	FOREIGN KEY (Point_ID) 
+	REFERENCES Points(Point_ID),
+CONSTRAINT FK_PointHistory_Orders 
+	FOREIGN KEY (Order_ID) 
+	REFERENCES [Order](Order_ID)
+);
+GO
+
+-- Invoice per order (1:1 typical)
+CREATE TABLE Invoice (
+Invoice_ID INT NOT NULL IDENTITY(1,1) PRIMARY KEY,
+Order_ID INT NOT NULL UNIQUE,
+CONSTRAINT FK_Invoice_Order
+	FOREIGN KEY (Order_ID)
+	REFERENCES [Order](Order_ID)
+);
+
+
+
+################# ADD CUSTOMER #################
+
+-- Add a customer
+INSERT INTO Customers (FullName, PhoneNumber, Email, [Address])
+VALUES ('Alice Johnson', '12345678', 'alice@test.com', 'Main Street 1');
+
+-- Give the customer points
+INSERT INTO Points (PointBalance, MaxDiscount, Customer_ID)
+VALUES (100, 10.00, 1);
+
+-- Create a shopping cart for that customer
+INSERT INTO ShoppingCart (Customer_ID)
+VALUES (1);
+
+-- Add a category
+INSERT INTO Categories (CategoryName)
+VALUES ('Electronics');
+
+-- Add a product
+INSERT INTO Products (ProductName, [Description], Price, StockStatus, PicturePath, Category_ID)
+VALUES ('Smartphone', 'Latest model', 499.99, 1, '/images/smartphone.jpg', 1);
+
+-- Put the product in the cart
+INSERT INTO ShoppingCartProduct (ShoppingCart_ID, Product_ID, Quantity, Unit)
+VALUES (1, 1, 2, 'pcs');
+
+-- Add payment method
+INSERT INTO PaymentMethods (PaymentMethod)
+VALUES ('Credit Card');
+
+-- Link payment to the cart
+INSERT INTO Payment (ShoppingCart_ID, PaymentMethod_ID)
+VALUES (1, 1);
+
+-- Add order status
+INSERT INTO OrderStatus ([Status])
+VALUES ('Pending');
+
+-- Create an order
+INSERT INTO [Order] (Point_ID, Customer_ID, Payment_ID, ShoppingCart_ID, OrderStatus_ID)
+VALUES (1, 1, 1, 1, 1);
+
+-- Generate invoice
+INSERT INTO Invoice (Order_ID)
+VALUES (1);
+
+################# VISNING AF CUSTOMER #################
+
+SELECT 
+    o.Order_ID,
+    i.Invoice_ID,             -- added invoice
+    c.FullName,
+    p.PointBalance,
+    pr.ProductName,
+    scp.Quantity,
+    pm.PaymentMethod,
+    os.Status
+FROM [Order] o
+JOIN Invoice i ON o.Order_ID = i.Order_ID   -- join invoice
+JOIN Customers c ON o.Customer_ID = c.Customer_ID
+JOIN Points p ON o.Point_ID = p.Point_ID
+JOIN ShoppingCart sc ON o.ShoppingCart_ID = sc.ShoppingCart_ID
+JOIN ShoppingCartProduct scp ON sc.ShoppingCart_ID = scp.ShoppingCart_ID
+JOIN Products pr ON scp.Product_ID = pr.Product_ID
+JOIN Payment pay ON o.Payment_ID = pay.Payment_ID
+JOIN PaymentMethods pm ON pay.PaymentMethod_ID = pm.PaymentMethod_ID
+JOIN OrderStatus os ON o.OrderStatus_ID = os.OrderStatus_ID;
